@@ -1,40 +1,64 @@
 # BRD-FitGap Orchestrator
 
-An Aetherion conversational agent that runs BRDGen, asks whether to continue, and passes the final BRD to FitMap after explicit consent.
+Aetherion conversational agent coordinating the existing BRDGen and FitMap agents.
 
-## Current status
+## Current behavior
 
-Phases 1 to 4 are complete and verified live on sbox/test. The agent runs BRDGen, asks an explicit Yes/No continuation question, and then runs FitMap, preserving its Oracle selections and its TestCraft offer.
+The agent runs BRDGen, asks for an explicit Yes/No decision, and runs FitMap only on a Yes. Both are invoked through `agentExecutor` with their known input fields and platform metadata; the orchestrator waits for each child and returns its real artifacts, statuses and warnings. A `brd_file` input analyses an existing BRD directly, skipping generation and the consent card.
 
-Version 0.0.5 is deployed on sbox/test. The source is at 0.0.6, which adds workflow logging, traceable FitMap run ids on failure, and corrected statuses on the recovery path; it is not published yet.
+Child invocation uses a bare uuid workflow id, which is what lets the children's human-input cards register. The full chain is verified live on sbox/test, including FitMap's TestCraft offer and TestCraft's own cards.
 
-Run `627dd47b-5787-4250-a929-82aeaebdd571` completed the whole chain on 3 November 2026: BRDGen's intake and draft review, this agent's consent card, FitMap's Oracle selections and TestCraft offer, and TestCraft's own three review cards, all in one conversation, returning both agents' artifacts. See [sandbox checklist](docs/brd-sandbox-check.md), [project setup](orchestrator/README.md), and [integration findings](docs/integration-findings.md).
+## Local setup (macOS ARM64)
 
-Phase 5 remains: cancellation, timeout and restart verification, and the release decision.
+Requires Python 3.12, uv, and access to the official SDK host (VPN may be required).
 
-## Workspace
+```bash
+cd orchestrator
+uv sync --locked --python /opt/homebrew/bin/python3.12
+source .venv/bin/activate
+aetherion version
+```
 
-- `docs/orchestrator-implementation-plan.md`: approved implementation plan.
-- `output/pdf/orchestrator-implementation-plan.pdf`: shareable plan.
-- `context.md`: decisions, evidence, and continuation notes.
+The SDK is pinned to 0.0.118, because 0.0.122 and above need database columns sbox-test lacks; `uv.lock` records resolved dependencies and hashes. The wheel targets macOS 26+ on ARM64. Do not use this wheel URL on Linux CI; an approved Linux source must be established first. If an old cached 403 persists after VPN access is restored, retry `uv sync --locked --no-cache`.
 
-Publishing to sbox/test normally requires a GitHub remote owned by AetherionAgents. This project publishes with the pinned 0.0.118 CLI, which predates that rule, so it is a workaround rather than a satisfied policy. A durable fix needs either the Unreviewed Publisher role on sbox/test or an AetherionAgents remote. See context.md.
+## Validation
 
-Repository: https://github.com/shrutiii-835/BRD-fitmap-orchestrator.git. This workspace is its local checkout; agent source lives in `orchestrator/`, and its README documents the verified local and publish commands.
+From `orchestrator/`:
 
-The BRDGen and FitMap source repositories were kept here as read-only references and have been removed now that the integration is verified. They remain at github.com/AetherionAgents/explora_prism and .../fit_gap_agent if a contract question needs checking again; `.gitignore` still excludes those paths so a re-clone stays untracked.
+```bash
+.venv/bin/ruff check src tests
+.venv/bin/ruff format --check src tests
+.venv/bin/pytest -q
+```
 
-## Scope
+98 tests import the installed SDK and exercise the registered function, both boundary-check modules, the consent card and the FitMap handoff with mocked child execution, without starting platform runs. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs recorded in `context.md`.
 
-Keep all interaction in one conversation. Reuse existing input and review forms. Transfer a stored document reference rather than downloading and re-uploading the BRD. Preserve the BRD if the user declines or FitMap fails. Do not duplicate either agent's processing logic.
+## Files
 
-## Setup status
+All paths below are under `orchestrator/`.
 
-See [Aetherion setup](docs/aetherion-setup.md) for verified prerequisites, the installed SDK version and the resolved access issue. The agent is deployed on sbox/test as `BRDFitGapOrchestrator`.
+- `src/agent/agent.py`: registered conversational entry point.
+- `src/agent/schemas.py`: public input/output contract.
+- `src/agent/brd.py`: input and output boundary validation for BRDGen.
+- `src/agent/fitmap.py`: payload construction and result validation for FitMap.
+- `tests/conftest.py`: supplies a plain logger, because the workflow logger needs a running workflow.
+- `src/agent/prompts/conversation.md`: conversation and consent rules.
+- `src/agent/metadata.json`: platform registration and form metadata.
+- `src/tools/`: no custom activities; child invocation uses the SDK executor.
+- `tests/`: input/intent and actual SDK registration checks.
 
-## Official references
+## Configuration and release
 
-- [Quickstart](https://test.sbox.aetherion.io/docs/quickstart)
-- [Chat agents](https://test.sbox.aetherion.io/docs/chat-agents)
-- [SDK utilities and human input](https://test.sbox.aetherion.io/docs/sdk-utilities)
-- [Agent-to-agent interface](https://test.sbox.aetherion.io/docs/a2a-lib)
+No application secrets are needed. The scaffold may create a local `.env`; it is ignored and must never be committed. `.env.template` contains no credentials. Any `AETHERION_*_TASK_QUEUE` pins in a local `.env` must be commented out before publishing, because the publish command loads that file.
+
+The sandbox tenant is `test`. Publish from `orchestrator/` with the pinned CLI:
+
+```bash
+.venv/bin/aetherion publish --source . --dist ./dist
+```
+
+Version numbers in `pyproject.toml`, `src/agent/metadata.json` and `src/tools/metadata.json` must be raised together before each publish, because republishing a live version is rejected. Deployment takes a few minutes; the agent is live when its registry status is ACTIVE and its image tag matches the new version.
+
+Known constraints: this CLI predates the AetherionAgents origin rule, so publishing works as a workaround rather than a satisfied policy. All of this project's dependencies are transitive through the SDK, and several carry published advisories that cannot be resolved without moving off the 0.0.118 pin; see `context.md`.
+
+See the root `context.md` for decisions, evidence, validation results and continuation notes.

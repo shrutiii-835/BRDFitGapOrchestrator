@@ -4,7 +4,7 @@
 
 Build a third Aetherion conversational agent coordinating BRDGen followed by optional FitMap analysis. The user must explicitly agree before FitMap runs. All existing input and review steps should appear in the same conversation. Neither reference agent may be modified or its pipeline duplicated.
 
-The approved plan is docs/orchestrator-implementation-plan.md. The PDF has no page header/footer or approval-request closing line. Edge cases are included. The platform question was intentionally removed from the proposal, but remains an implementation dependency.
+The approved implementation plan is held outside this repository. Edge cases are included. The platform question was intentionally removed from the proposal, but remains an implementation dependency.
 
 ## Working agreement
 
@@ -52,7 +52,7 @@ Validation: 19 tests passed; Ruff lint and format checks passed; actual chat/HIT
 
 The user selected test. CLI configuration confirmed sbox/test. Expired-session refresh failed, then normal browser login succeeded. Read-only registry access confirmed 29 agents, including active/chat-enabled BRDGen and FitMap. No existing-agent run was started.
 
-Important live/reference difference: deployed FitMap now offers TestCraft after its analysis. Its offer_testcraft=false setting is documented only for direct runs, never conversation mode. On 3 November 2026 the user chose to preserve the offer and reported that FitMap uses agentExecutor to call TestCraft. The user confirmed TestCraft itself asks for input after launch. See docs/integration-findings.md for the verified fields and pending contracts.
+Important live/reference difference: deployed FitMap now offers TestCraft after its analysis. Its offer_testcraft=false setting is documented only for direct runs, never conversation mode. On 3 November 2026 the user chose to preserve the offer and reported that FitMap uses agentExecutor to call TestCraft. The user confirmed TestCraft itself asks for input after launch.
 
 Actual Python import confirms a2a_lib request/response models are bundled in 0.0.124. The current SDK utility page still prohibits child-workflow human input. Exact independent-run API and conversation routing remain unverified; no connector implementation or architecture choice has been committed.
 
