@@ -31,7 +31,7 @@ From `orchestrator/`:
 .venv/bin/pytest -q
 ```
 
-98 tests import the installed SDK and exercise the registered function, both boundary-check modules, the consent card and the FitMap handoff with mocked child execution, without starting platform runs. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs recorded in `context.md`.
+98 tests import the installed SDK and exercise the registered function, both boundary-check modules, the consent card and the FitMap handoff with mocked child execution, without starting platform runs. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs.
 
 ## Files
 
@@ -59,6 +59,4 @@ The sandbox tenant is `test`. Publish from `orchestrator/` with the pinned CLI:
 
 Version numbers in `pyproject.toml`, `src/agent/metadata.json` and `src/tools/metadata.json` must be raised together before each publish, because republishing a live version is rejected. Deployment takes a few minutes; the agent is live when its registry status is ACTIVE and its image tag matches the new version.
 
-Known constraints: this CLI predates the AetherionAgents origin rule, so publishing works as a workaround rather than a satisfied policy. All of this project's dependencies are transitive through the SDK, and several carry published advisories that cannot be resolved without moving off the 0.0.118 pin; see `context.md`.
-
-See the root `context.md` for decisions, evidence, validation results and continuation notes.
+Known constraints: this CLI predates the AetherionAgents origin rule, so publishing works as a workaround rather than a satisfied policy. All of this project's dependencies are transitive through the SDK, and several carry published advisories that cannot be resolved without moving off the 0.0.118 pin.
