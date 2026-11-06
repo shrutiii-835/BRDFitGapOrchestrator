@@ -97,9 +97,21 @@ def select_brd_document(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def brd_notices(result: dict[str, Any]) -> list[str]:
-    """Actual warnings from the child, never softened or summarised."""
+    """Actual warnings from the child, never softened or summarised.
+
+    `error` is only BRDGen's failure text: it sets the field at
+    AetherionAgents/explora_prism src/agent/agent.py:73, :475 and :487 (commit 0cbc8ea),
+    all three under status error, cancelled or invalid_input. Reading it on a success
+    would show the user an error for a BRD that worked, so this says what it means
+    rather than relying on BRDGen never attaching one. `partial` still carries it: a
+    partial run did lose something, and if BRDGen ever explains that through `error`,
+    hiding it would hide something real.
+    """
+    fields = ("warning", "consolidation_warning")
+    if result.get("status") != "success":
+        fields += ("error",)
     return [
         result[field]
-        for field in ("warning", "consolidation_warning", "error")
+        for field in fields
         if isinstance(result.get(field), str) and result[field].strip()
     ]

@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock
 import pytest
 from temporalio.exceptions import CancelledError, ChildWorkflowError
 
-from src.agent.brd import build_brd_payload, select_brd_document, validate_brd_result
+from src.agent.brd import (
+    brd_notices,
+    build_brd_payload,
+    select_brd_document,
+    validate_brd_result,
+)
 
 agent_module = import_module("src.agent.agent")
 
@@ -351,3 +356,15 @@ def test_no_usable_requirements_document_is_refused(outputs):
     """validate_brd_result normally catches this first; the guard must still hold."""
     with pytest.raises(ValueError):
         select_brd_document({"status": "success", "outputs": outputs})
+
+
+def test_an_error_string_is_not_shown_on_a_successful_run():
+    """BRDGen sets `error` only when it fails; a success must never surface one."""
+    success = {"status": "success", "error": "stale note", "warning": "real warning"}
+    assert brd_notices(success) == ["real warning"]
+
+
+@pytest.mark.parametrize("status", ["error", "cancelled", "invalid_input", "partial"])
+def test_an_error_string_is_shown_whenever_the_run_did_not_succeed(status):
+    """Partial included: it lost something, and `error` may be the only explanation."""
+    assert brd_notices({"status": status, "error": "BRDGen stopped"}) == ["BRDGen stopped"]

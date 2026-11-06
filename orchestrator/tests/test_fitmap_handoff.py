@@ -386,3 +386,14 @@ async def test_the_plain_ready_reply_is_unchanged_without_a_brd(monkeypatch):
     assert result["status"] == "ready"
     assert result["stage"] == "brd"
     assert "BRDGen" in result["message"]
+
+
+async def test_a_brd_error_string_is_never_carried_onto_a_successful_analysis(children, brd_result):
+    """Same rule as brd_notices: `error` is BRDGen's failure text, so a result whose
+    status is FitMap's success must not carry one. It is deliberately absent from
+    BRD_RESULT_FIELDS."""
+    brd_result["error"] = "stale note from BRDGen"
+    assert "error" not in schemas.BRD_RESULT_FIELDS
+    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    assert result["status"] == "success"
+    assert "error" not in result
