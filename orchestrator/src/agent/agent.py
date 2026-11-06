@@ -74,8 +74,24 @@ async def _run_fitmap(child_id: str, child_payload: dict[str, Any]) -> dict[str,
 
 
 def _new_child_id() -> str:
-    """A bare uuid: the platform gives only those a child agent run, which the
-    children's own cards need to register. workflow.uuid4 is replay-safe."""
+    """A bare uuid for a child run. Do not make this readable.
+
+    The platform creates a child agent run record only for a plain uuid, and the
+    child's human-input cards need that record to attach to. This mirrors how FitMap
+    starts its own interactive child: AetherionAgents/fit_gap_agent PR #22,
+    `_run_testcraft` - "A bare uuid: supernova gives only those a child agent_run,
+    which HITL cards need."
+
+    Confirmed the hard way here too. Version 0.0.2 used a derived id (`<parent>-brd`);
+    BRDGen started, its register_human_input_request activity failed three times, and
+    its upload card never reached the user, so the run hung with nothing on screen. A
+    bare uuid in 0.0.3 fixed it - run f764134c-c6d7-4d4a-95e2-78c3cf306aa2 shows all
+    three of BRDGen's cards arriving against child
+    61f57005-c84a-41d3-918e-cafbf2579843.
+
+    workflow.uuid4 rather than uuid.uuid4: Temporal replays this function, and a
+    non-deterministic id would produce a different child on replay.
+    """
     return str(workflow.uuid4())
 
 
