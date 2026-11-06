@@ -3,6 +3,19 @@ name = "brd-fitmap-orchestrator"
 version = "0.0.6"
 description = "Conversational coordination of BRDGen and FitMap"
 readme = "README.md"
+# Tied to the one wheel below. It is tagged cp312-cp312-macosx_26_0_arm64 and ships
+# compiled .so files built against CPython 3.12, so it cannot load on 3.13, and the SDK
+# host publishes no 3.13 build to widen towards: every Python wheel it offers is cp312
+# (Darwin 0.0.125 and the MinGW win_amd64 build), whatever the page's "Python 3.12+"
+# wording suggests. That host offers no Linux wheel, though the SDK is published for
+# Linux through the private CodeArtifact repository instead, so this pin is about the
+# wheel named below and not about which platforms the SDK supports.
+#
+# This is also what both agents this orchestrator calls pin, to the character:
+# AetherionAgents/explora_prism and AetherionAgents/fit_gap_agent both carry
+# requires-python = ">=3.12.10,<3.13" against their own cp312 wheels.
+#
+# Widen this together with the wheel URL, never on its own.
 requires-python = ">=3.12.10,<3.13"
 
 
