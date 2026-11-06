@@ -105,31 +105,6 @@ OUTPUT_SCHEMA = [
         "type": "array",
         "description": "BRDGen's own list of input files accepted despite reported issues.",
     },
-    {
-        "name": "skipped_chunk_count",
-        "type": "number",
-        "description": "Transcript chunks BRDGen could not extract requirements from.",
-    },
-    {
-        "name": "process_row_count",
-        "type": "number",
-        "description": "Process rows BRDGen read from the listing.",
-    },
-    {
-        "name": "process_ids_with_requirements",
-        "type": "number",
-        "description": "Processes BRDGen produced requirements for.",
-    },
-    {
-        "name": "masked_entity_count",
-        "type": "number",
-        "description": "Entities BRDGen's masking service replaced.",
-    },
-    {
-        "name": "consolidated_from",
-        "type": "number",
-        "description": "Requirement count before BRDGen consolidated duplicates.",
-    },
 ]
 
 
@@ -141,16 +116,19 @@ OUTPUT_SCHEMA = [
 # field added above belongs in this tuple as well, and a test fails if they drift.
 #
 # Sources, all read at AetherionAgents/explora_prism commit 0cbc8ea, src/agent/agent.py.
-# Most are conditional, so this is what the orchestrator may carry, not what every run
-# returns:
-#   :607, :648  process_row_count, masked_entity_count - always, both branches
-#   :649        process_ids_with_requirements - Excel branch only
+# All four are conditional, so this is what the orchestrator may carry, not what every
+# run returns:
 #   :670, :672  skipped_files, used_despite_issues - only when inputs had problems
-#   :674, :676  skipped_chunk_count, warning - only when extraction partly failed
-#   :681, :685  consolidation_warning or consolidated_from - mutually exclusive
-# The Word branch returns at :628 with only the two counts, so a Word BRD carries no
-# diagnostics at all. An absent field is left absent rather than carried as null: a
-# caller can then tell "BRDGen reported nothing skipped" from "BRDGen never looked".
+#   :676        warning - only when extraction partly failed
+#   :681        consolidation_warning - only when consolidation failed
+# The Word branch returns at :628 before any of them are set, so a Word BRD carries
+# none. An absent field is left absent rather than carried as null: a caller can then
+# tell "BRDGen reported nothing skipped" from "BRDGen never looked".
+#
+# BRDGen also returns counts (process_row_count, masked_entity_count and the rest).
+# They are deliberately not declared or carried: the platform's output schema is only
+# validated at publish, no agent on this platform declares a numeric output type, and a
+# count is not worth putting an unverified type into a registered contract for.
 #
 # FitMap returns no field of any of these names - in AetherionAgents/fit_gap_agent
 # (commit 2c1fe69) every "warning" is a logger call - so carrying them overwrites
@@ -160,9 +138,4 @@ BRD_RESULT_FIELDS = (
     "consolidation_warning",
     "skipped_files",
     "used_despite_issues",
-    "skipped_chunk_count",
-    "process_row_count",
-    "process_ids_with_requirements",
-    "masked_entity_count",
-    "consolidated_from",
 )

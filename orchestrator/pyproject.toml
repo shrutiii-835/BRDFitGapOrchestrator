@@ -57,3 +57,6 @@ line-ending = "auto"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
+# Fails the run below the current level, so a drop is noticed rather than reported.
+# This gates a local run today; it gates a merge only once a runner exists.
+addopts = "--cov=src --cov-report=term-missing --cov-fail-under=95"

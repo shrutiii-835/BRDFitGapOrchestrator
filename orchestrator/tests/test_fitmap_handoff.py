@@ -331,11 +331,6 @@ async def test_every_brd_owned_field_survives_fitmap(children, brd_result):
         "consolidation_warning": "Requirements were not consolidated.",
         "skipped_files": [{"file": "notes.txt", "issue": "unreadable"}],
         "used_despite_issues": [{"file": "calls.txt", "issue": "no match"}],
-        "skipped_chunk_count": 2,
-        "process_row_count": 40,
-        "process_ids_with_requirements": 38,
-        "masked_entity_count": 17,
-        "consolidated_from": 95,
     }
     # Every declared field is exercised, so adding one without carrying it fails here.
     assert set(supplied) == set(schemas.BRD_RESULT_FIELDS)
@@ -349,13 +344,23 @@ async def test_every_brd_owned_field_survives_fitmap(children, brd_result):
     assert "Extraction failed for 2 of 9 transcript chunk(s)." in result["message"]
 
 
-async def test_fields_brdgen_did_not_set_are_not_invented(children, brd_result):
-    """The Word branch returns only counts; absent fields must not appear as nulls."""
+async def test_undeclared_brd_counts_are_not_carried(children, brd_result):
+    """BRDGen's counts use a numeric type no agent here declares, so they stay out of
+    the registered contract rather than being smuggled through."""
     brd_result["process_row_count"] = 40
+    brd_result["masked_entity_count"] = 17
     result = await agent_module.orchestrator.fn({"start_workflow": True})
-    assert result["process_row_count"] == 40
+    assert "process_row_count" not in result
+    assert "masked_entity_count" not in result
+
+
+async def test_fields_brdgen_did_not_set_are_not_invented(children, brd_result):
+    """A run with nothing to report must not gain empty fields."""
+    brd_result["warning"] = "Extraction failed for 2 of 9 transcript chunk(s)."
+    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    assert result["warning"] == brd_result["warning"]
     for field in schemas.BRD_RESULT_FIELDS:
-        if field != "process_row_count":
+        if field != "warning":
             assert field not in result
 
 
