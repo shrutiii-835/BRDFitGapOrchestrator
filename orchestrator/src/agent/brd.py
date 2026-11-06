@@ -65,6 +65,18 @@ def validate_brd_result(result: Any) -> dict[str, Any]:
             and is_storage_key(item.get("file_key"))
             and item["file_key"].lower().endswith(f".{item['extension']}")
         ]
+        # BRDGen returns exactly one requirements document, by construction.
+        # AetherionAgents/explora_prism, src/agent/agent.py, commit 0cbc8ea (2026-10-14):
+        # the outputs list is built in two places only, the arms of one
+        # `if output_format == "word"` branch at line 581 -
+        #   line 609: one .docx + one masking .zip
+        #   line 651: one .xlsx + one masking .zip
+        # Both are hard-coded literals; nothing appends and nothing loops, so Word and
+        # Excel can never both appear. (The third .xlsx, at line 399, is a draft attached
+        # to a review card, not an output.)
+        # That is a read of that repository's main, not of the deployed build. If BRDGen
+        # ever returns two documents, this raises on purpose: stop and re-verify rather
+        # than silently sending FitMap a file nobody chose.
         if len(documents) != 1:
             raise ValueError(
                 "BRDGen did not return one final requirements document. Inspect its run."
