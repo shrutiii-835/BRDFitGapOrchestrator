@@ -364,3 +364,25 @@ async def test_a_fitmap_field_is_not_blanked_by_an_absent_brd_one(children, fitm
     fitmap_result["warning"] = "FitMap's own warning."
     result = await agent_module.orchestrator.fn({"start_workflow": True})
     assert result["warning"] == "FitMap's own warning."
+
+
+async def test_a_supplied_brd_is_never_dropped_without_the_start_flag(monkeypatch):
+    """A file can arrive on a turn the platform did not mark as a start."""
+    execute = AsyncMock()
+    monkeypatch.setattr(agent_module.agentExecutor, "execute", execute)
+    result = await agent_module.orchestrator.fn({"brd_file": BRD_KEY})
+    # Named, not started: nothing runs without an explicit request.
+    execute.assert_not_awaited()
+    assert result["status"] == "ready"
+    assert result["stage"] == "fitgap"
+    assert "BRD" in result["message"]
+
+
+async def test_the_plain_ready_reply_is_unchanged_without_a_brd(monkeypatch):
+    execute = AsyncMock()
+    monkeypatch.setattr(agent_module.agentExecutor, "execute", execute)
+    result = await agent_module.orchestrator.fn({})
+    execute.assert_not_awaited()
+    assert result["status"] == "ready"
+    assert result["stage"] == "brd"
+    assert "BRDGen" in result["message"]

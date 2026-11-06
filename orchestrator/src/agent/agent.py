@@ -286,7 +286,21 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
     output_format = payload.get("output_format")
     if output_format is not None and output_format not in ("Excel", "Word"):
         return _response("invalid_input", "Choose Excel or Word as the output format.")
+    # Read before the ready branch below. A BRD can arrive on a turn the platform did
+    # not mark as a start - "is this format right for a fit-gap?" is a question, not a
+    # request - and checking the flag first would drop that file without saying so.
+    existing_brd = payload.get("brd_file")
     if not start:
+        if existing_brd is not None:
+            # Named, not started: the rest of this agent asks before running FitMap,
+            # and an attached file is not clearer consent than an answered question.
+            return _response(
+                "ready",
+                "I have your BRD and have not started anything yet. Say so and I will "
+                "send it straight to FitMap for the Oracle fit-gap analysis, skipping "
+                "BRD generation.",
+                stage="fitgap",
+            )
         return _response(
             "ready",
             "I run BRDGen with its existing uploads and review, then ask whether to "
@@ -295,7 +309,6 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
 
     # Recovery: an existing BRD skips generation. Supplying one and asking to start is
     # itself the request for analysis, so it needs no separate continuation question.
-    existing_brd = payload.get("brd_file")
     if existing_brd is not None:
         return await _run_fitmap_only(existing_brd, payload)
 
