@@ -126,9 +126,11 @@ OUTPUT_SCHEMA = [
 # tell "BRDGen reported nothing skipped" from "BRDGen never looked".
 #
 # BRDGen also returns counts (process_row_count, masked_entity_count and the rest).
-# They are deliberately not declared or carried: the platform's output schema is only
-# validated at publish, no agent on this platform declares a numeric output type, and a
-# count is not worth putting an unverified type into a registered contract for.
+# They are deliberately left out. They describe BRDGen's own processing rather than the
+# result this orchestrator returns, and every name in OUTPUT_SCHEMA is a promise to keep
+# returning it, so mirroring another agent's internal counters would tie this contract
+# to that agent's implementation. The warnings and the skipped-file lists are the part a
+# consumer can act on.
 #
 # FitMap returns no field of any of these names - in AetherionAgents/fit_gap_agent
 # (commit 2c1fe69) every "warning" is a logger call - so carrying them overwrites

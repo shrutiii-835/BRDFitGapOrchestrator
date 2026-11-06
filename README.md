@@ -31,7 +31,7 @@ From `orchestrator/`:
 .venv/bin/pytest -q
 ```
 
-112 tests import the installed SDK and exercise the registered function, both boundary-check modules, the consent card and the FitMap handoff with mocked child execution, without starting platform runs. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs.
+113 tests import the installed SDK and exercise the registered function, both boundary-check modules, the consent card and the FitMap handoff with mocked child execution, without starting platform runs. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs.
 
 ## Files
 
