@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock
 import pytest
 from temporalio.exceptions import CancelledError, ChildWorkflowError
 
-from src.agent.fitmap import build_fitmap_payload, fitmap_artifacts, validate_fitmap_result
+from src.agent import schemas
+from src.agent.fitmap import (
+    build_fitmap_payload,
+    fitmap_artifacts,
+    validate_fitmap_result,
+)
 
 agent_module = import_module("src.agent.agent")
 
@@ -311,3 +316,51 @@ async def test_consent_path_cancellation_propagates(children):
     children.side_effect = [children.side_effect.__next__(), cancelled]
     with pytest.raises(ChildWorkflowError):
         await agent_module.orchestrator.fn({"start_workflow": True})
+
+
+def test_carried_fields_stay_in_step_with_the_schema():
+    """BRD_RESULT_FIELDS promises these are declared; drift would silently drop them."""
+    declared = {field["name"] for field in schemas.OUTPUT_SCHEMA}
+    assert set(schemas.BRD_RESULT_FIELDS) <= declared
+
+
+async def test_every_brd_owned_field_survives_fitmap(children, brd_result):
+    """Spreading FitMap's result must not erase anything BRDGen declared."""
+    supplied = {
+        "warning": "Extraction failed for 2 of 9 transcript chunk(s).",
+        "consolidation_warning": "Requirements were not consolidated.",
+        "skipped_files": [{"file": "notes.txt", "issue": "unreadable"}],
+        "used_despite_issues": [{"file": "calls.txt", "issue": "no match"}],
+        "skipped_chunk_count": 2,
+        "process_row_count": 40,
+        "process_ids_with_requirements": 38,
+        "masked_entity_count": 17,
+        "consolidated_from": 95,
+    }
+    # Every declared field is exercised, so adding one without carrying it fails here.
+    assert set(supplied) == set(schemas.BRD_RESULT_FIELDS)
+    brd_result.update(supplied)
+    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    assert result["status"] == "success"
+    assert result["stage"] == "fitgap"
+    for field, value in supplied.items():
+        assert result[field] == value
+    # The warnings stay readable by a human too, not only by a schema consumer.
+    assert "Extraction failed for 2 of 9 transcript chunk(s)." in result["message"]
+
+
+async def test_fields_brdgen_did_not_set_are_not_invented(children, brd_result):
+    """The Word branch returns only counts; absent fields must not appear as nulls."""
+    brd_result["process_row_count"] = 40
+    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    assert result["process_row_count"] == 40
+    for field in schemas.BRD_RESULT_FIELDS:
+        if field != "process_row_count":
+            assert field not in result
+
+
+async def test_a_fitmap_field_is_not_blanked_by_an_absent_brd_one(children, fitmap_result):
+    """FitMap returns no warning today; if it ever does, an empty BRD must not win."""
+    fitmap_result["warning"] = "FitMap's own warning."
+    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    assert result["warning"] == "FitMap's own warning."

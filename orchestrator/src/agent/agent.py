@@ -18,7 +18,7 @@ from src.agent.brd import (
     validate_brd_result,
 )
 from src.agent.fitmap import build_fitmap_payload, fitmap_artifacts, validate_fitmap_result
-from src.agent.schemas import AGENT_NAME, INPUT_SCHEMA, OUTPUT_SCHEMA
+from src.agent.schemas import AGENT_NAME, BRD_RESULT_FIELDS, INPUT_SCHEMA, OUTPUT_SCHEMA
 
 _DESCRIPTION = (
     resources.files("src.agent.prompts").joinpath("conversation.md").read_text(encoding="utf-8")
@@ -170,8 +170,15 @@ async def _continue_to_fitmap(
     message = analysis.get("message") or "FitMap finished; its results are below."
     if analysis["status"] != "success":
         message += " Your BRD is below and is unaffected."
+    # FitMap's result is the base below, so BRDGen's own OUTPUT_SCHEMA fields have to be
+    # put back or they survive only as message text and `result["warning"]` returns None.
+    # Values BRDGen did not set are skipped, so a field FitMap did set is never blanked.
+    carried = {
+        field: result[field] for field in BRD_RESULT_FIELDS if _is_present(result.get(field))
+    }
     return {
         **analysis,
+        **carried,
         "status": analysis["status"],
         "stage": "fitgap",
         "brd_status": result["status"],
@@ -186,6 +193,13 @@ async def _continue_to_fitmap(
             *fitmap_artifacts(analysis),
         ],
     }
+
+
+def _is_present(value: Any) -> bool:
+    """Carry a value BRDGen actually set; a blank string or absent field is not one."""
+    if value is None:
+        return False
+    return bool(value.strip()) if isinstance(value, str) else True
 
 
 def _with_notices(message: str, notices: list[str]) -> str:
