@@ -1,7 +1,8 @@
 """Exercise the foundation against the installed SDK, without starting remote runs."""
 
 import json
-from importlib import resources
+from datetime import timedelta
+from importlib import import_module, resources
 
 import pytest
 from aetherion_sdk.decorators import AGENT_REGISTRY, REGISTERED_TOOLS
@@ -10,6 +11,8 @@ from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner
 
 from src.agent.agent import orchestrator
 from src.agent.schemas import AGENT_NAME, INPUT_SCHEMA
+
+agent_module = import_module("src.agent.agent")
 
 
 @pytest.mark.parametrize(
@@ -51,3 +54,17 @@ async def test_registered_workflow_can_be_prepared_in_temporal_sandbox():
     SandboxedWorkflowRunner().prepare_workflow(
         workflow._Definition.must_from_class(definition.temporal_class)
     )
+
+
+def test_the_run_cap_is_never_reached_by_the_stages():
+    """The cap is uncatchable: it must outlast every stage, or a healthy run is killed
+    with no result. Strictly greater, so setting _SLACK to zero fails here."""
+    stages = (
+        agent_module._BRD_TIMEOUT + agent_module._CONTINUE_TIMEOUT + agent_module._FITMAP_TIMEOUT
+    )
+    assert agent_module._RUN_TIMEOUT > stages
+
+
+def test_the_run_cap_is_unchanged_by_deriving_it():
+    """Deriving the cap must not alter the 7 days this agent already ran with."""
+    assert agent_module._RUN_TIMEOUT == timedelta(days=7)

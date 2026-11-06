@@ -25,9 +25,23 @@ _DESCRIPTION = (
 )
 
 
+# Stage timeouts. Each one is caught below and ends the run with an explanation and
+# the BRD intact, so these are the limits a real run is meant to hit.
+_BRD_TIMEOUT = timedelta(days=3)
 _CONTINUE_TIMEOUT = timedelta(hours=24)
 # Covers FitMap's own Oracle selection cards and the TestCraft offer it may make.
 _FITMAP_TIMEOUT = timedelta(days=2)
+
+# The run cap is different in kind: Temporal's run_timeout cannot be caught, so it ends
+# the workflow with no result and takes the running child with it. It exists only to
+# reap a wedged run and must never be what stops a healthy one. Deriving it from the
+# stages keeps that true without anyone having to remember: lengthen a stage and the cap
+# follows by the same amount. _SLACK covers the gaps between stages - validating a
+# result, raising the consent card, the calls themselves - which are minutes, not days,
+# and do not grow when a stage does. One day keeps the cap at the 7 days this agent
+# already ran with, so the derivation changes no behaviour today.
+_SLACK = timedelta(days=1)
+_RUN_TIMEOUT = _BRD_TIMEOUT + _CONTINUE_TIMEOUT + _FITMAP_TIMEOUT + _SLACK
 
 
 async def _ask_continue(document: dict[str, Any], notices: list[str]) -> str:
@@ -275,7 +289,7 @@ def _response(
     chat_enabled=True,
     hitl_enabled=True,
 )
-@agent(name=AGENT_NAME, run_timeout=timedelta(days=7))
+@agent(name=AGENT_NAME, run_timeout=_RUN_TIMEOUT)
 async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
     """Run BRDGen, ask whether to continue, and run FitMap only on an explicit Yes."""
     if not isinstance(payload, dict):
@@ -324,7 +338,7 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
             "BRDGen",
             child_payload,
             workflow_id=child_id,
-            execution_timeout=timedelta(days=3),
+            execution_timeout=_BRD_TIMEOUT,
             retry_policy=RetryPolicy(maximum_attempts=1),
         )
     except ChildWorkflowError as exc:
