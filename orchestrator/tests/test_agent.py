@@ -4,6 +4,7 @@ import json
 from datetime import timedelta
 from importlib import import_module, resources
 
+import aetherion_sdk
 import pytest
 from aetherion_sdk.decorators import AGENT_REGISTRY, REGISTERED_TOOLS
 from temporalio import workflow
@@ -13,6 +14,14 @@ from src.agent.agent import orchestrator
 from src.agent.schemas import AGENT_NAME, INPUT_SCHEMA
 
 agent_module = import_module("src.agent.agent")
+
+# These two assert on the SDK's own registration, so a stub could only confirm what the
+# stub was written to do. On a runner without the private SDK they skip and say so,
+# rather than passing for the wrong reason. conftest installs the stub.
+needs_real_sdk = pytest.mark.skipif(
+    getattr(aetherion_sdk, "__stub__", False),
+    reason="needs the real aetherion_sdk; the stub cannot prove platform registration",
+)
 
 
 @pytest.mark.parametrize(
@@ -35,6 +44,7 @@ async def test_invalid_input_returns_safe_error(payload):
     assert (await orchestrator.fn(payload))["status"] == "invalid_input"
 
 
+@needs_real_sdk
 def test_real_sdk_registration_and_metadata_agree():
     definition = AGENT_REGISTRY[AGENT_NAME]
     registration = REGISTERED_TOOLS[AGENT_NAME]
@@ -49,6 +59,7 @@ def test_real_sdk_registration_and_metadata_agree():
     }
 
 
+@needs_real_sdk
 async def test_registered_workflow_can_be_prepared_in_temporal_sandbox():
     definition = AGENT_REGISTRY[AGENT_NAME]
     SandboxedWorkflowRunner().prepare_workflow(
