@@ -1,0 +1,7 @@
+{
+  "name": "BRDFitGapOrchestrator Tools",
+  "version": "0.0.6",
+  "description": "No custom activities are required for the current SDK-native BRDGen connection.",
+  "component": "activity",
+  "config": {}
+}

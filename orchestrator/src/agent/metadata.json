@@ -1,0 +1,34 @@
+{
+  "name": "BRDFitGapOrchestrator",
+  "version": "0.0.6",
+  "description": "Runs BRDGen with its existing input and review flow, asks whether to continue, and then runs FitMap, preserving its Oracle selections and TestCraft offer.",
+  "component": "agent",
+  "config": {
+    "chat_enabled": true,
+    "hitl_enabled": true,
+    "triggers": [
+      {
+        "name": "start_workflow",
+        "type": "boolean",
+        "required": false,
+        "friendly_name": "Start workflow",
+        "description": "Start only on an explicit user request."
+      },
+      {
+        "name": "output_format",
+        "type": "dropdown",
+        "required": false,
+        "friendly_name": "BRD output format",
+        "description": "Excel, Word"
+      },
+      {
+        "name": "brd_file",
+        "type": "file",
+        "accepts": ".xlsx, .docx, .pdf",
+        "required": false,
+        "friendly_name": "Existing BRD (optional)",
+        "description": "Analyse a BRD you already have, skipping generation."
+      }
+    ]
+  }
+}
