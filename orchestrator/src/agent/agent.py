@@ -48,8 +48,11 @@ _DESCRIPTION = (
 _START_TIMEOUT = timedelta(hours=24)
 _BRD_TIMEOUT = timedelta(days=3)
 _CONTINUE_TIMEOUT = timedelta(hours=24)
-# Covers FitMap's own Oracle selection cards and the TestCraft offer it may make.
-_FITMAP_TIMEOUT = timedelta(days=2)
+# Matches FitMap's own run_timeout (4 days, fit_gap_agent/src/agent/workflow.py).
+# A healthy FitMap run can legitimately need most of that: three intake cards at up
+# to 24h each, the analysis, a 24h TestCraft offer and a TestCraft child of up to a
+# day. Anything shorter here would kill FitMap mid-intake or mid-TestCraft.
+_FITMAP_TIMEOUT = timedelta(days=4)
 # TestCraft runs its own upload box, file check and three review gates
 # (AetherionAgents/explora_polaris, src/agent/agents.py, commit 9e0eea7), so it is
 # given the same room as FitMap rather than the minutes its processing takes.
@@ -64,18 +67,38 @@ _TESTCRAFT_TIMEOUT = timedelta(days=2)
 # Every run waits for the start question, so that one is always counted. After it comes
 # one of two routes, never both, so the cap takes the longer rather than the sum:
 #
-#   BRDGen route:    1 (start) + 3 (BRDGen) + 1 (continue?) + 2 (FitMap) = 7 days
+#   BRDGen route:    1 (start) + 3 (BRDGen) + 1 (continue?) + 4 (FitMap) = 9 days
 #   TestCraft route: 1 (start) + 2 (TestCraft)                           = 3 days
 #
 # _SLACK covers the gaps between stages - validating a result, raising a card, the calls
 # themselves. Those are minutes, not days, and do not grow when a stage does.
 #
-# 7 + 1 slack = 8 days. It was 7 before the start question: that question added a place
-# a user can sit for a day, so the cap grew by a day. That is the sum working, not a
+# 9 + 1 slack = 10 days. It was 8 while FitMap was given only 2 days; raising FitMap to
+# its own 4-day limit grew the cap by the same 2 days. That is the sum working, not a
 # separate decision.
 _SLACK = timedelta(days=1)
 _BRD_CHAIN = _BRD_TIMEOUT + _CONTINUE_TIMEOUT + _FITMAP_TIMEOUT
 _RUN_TIMEOUT = _START_TIMEOUT + max(_BRD_CHAIN, _TESTCRAFT_TIMEOUT) + _SLACK
+
+
+# A card the user closed or rejected, as FitMap's intake treats it (workflow.py).
+_CANCEL_ACTIONS = ("cancel", "reject")
+
+
+class _ChoiceField(Field):
+    """A choice field the chat renders as a numbered selection card.
+
+    The SDK's default spec sends options as ``[{"value": ...}]``, which the chat
+    does not draw as selectable options. FitMap's intake cards send them as a
+    plain list of strings (fit_gap_agent/src/agent/workflow.py, ``_UIField``),
+    and that is what renders the numbered radio list, so the same spec is used here.
+    """
+
+    def to_field_spec(self) -> dict[str, Any]:
+        spec = super().to_field_spec()
+        if self.type == "choice":
+            spec["options"] = list(self.options or ())
+        return spec
 
 
 def _named_start_point(value: Any) -> str | None:
@@ -90,9 +113,10 @@ async def _ask_start_point() -> str:
     """Ask where to begin. No default: silence starts nothing, as everywhere else here.
 
     Returns the chosen agent, or why there is none: "timeout" when the card went
-    unanswered, "unclear" when the answer was not one of the three. Neither is a start
-    point, but they are different things, and someone who answered should not be told
-    they stayed silent. Neither word can collide with a real answer.
+    unanswered, "cancelled" when the user closed or rejected it, "unclear" when the
+    answer was not one of the three. None is a start point, but they are different
+    things, and someone who answered should not be told they stayed silent. No word can
+    collide with a real answer.
     """
     response = await humanInput.request(
         "Which agent do you want to start from?\n\n"
@@ -101,7 +125,7 @@ async def _ask_start_point() -> str:
         "before anything after it runs.",
         request_type="input",
         fields=[
-            Field(
+            _ChoiceField(
                 name="start_from",
                 type="choice",
                 friendly_name="Start from",
@@ -109,13 +133,15 @@ async def _ask_start_point() -> str:
                 required=True,
             )
         ],
-        metadata={"title": "Where should this run start?"},
+        metadata={"title": "Where should this run start?", "step_label": "Choose agent"},
         step_id="start_point",
         timeout=_START_TIMEOUT,
         on_timeout="return_none",
     )
     if response is None:
         return "timeout"
+    if response.action_type in _CANCEL_ACTIONS:
+        return "cancelled"
     return _named_start_point(response.value("start_from")) or "unclear"
 
 
@@ -131,7 +157,7 @@ async def _ask_continue(document: dict[str, Any], notices: list[str]) -> str:
         prompt,
         request_type="input",
         fields=[
-            Field(
+            _ChoiceField(
                 name="continue_to_fitmap",
                 type="choice",
                 friendly_name="Continue to fit-gap analysis",
@@ -139,13 +165,15 @@ async def _ask_continue(document: dict[str, Any], notices: list[str]) -> str:
                 required=True,
             )
         ],
-        metadata={"title": "Continue to fit-gap analysis?"},
+        metadata={"title": "Continue to fit-gap analysis?", "step_label": "BRD ready"},
         step_id="fitmap_consent",
         timeout=_CONTINUE_TIMEOUT,
         on_timeout="return_none",
     )
     if response is None:
         return "timeout"
+    if response.action_type in _CANCEL_ACTIONS:
+        return "cancelled"
     answer = response.value("continue_to_fitmap")
     return "Yes" if isinstance(answer, str) and answer.strip().lower() == "yes" else "No"
 
@@ -572,10 +600,12 @@ async def _run_brdgen(payload: dict[str, Any], carried: list[str]) -> dict[str, 
     decision = await _ask_continue(document, reported)
     workflow.logger.info("Continuation decision: %s.", decision)
     if decision != "Yes":
-        message = (
-            "Stopping with the BRD, as you asked. FitMap was not started."
-            if decision == "No"
-            else "No answer within 24 hours, so I stopped with the BRD. FitMap was not started."
+        message = {
+            "No": "Stopping with the BRD, as you asked. FitMap was not started.",
+            "cancelled": "You closed the card, so I stopped with the BRD. FitMap was not started.",
+        }.get(
+            decision,
+            "No answer within 24 hours, so I stopped with the BRD. FitMap was not started.",
         )
         if notices:
             message += "\n\n" + "\n".join(notices)
@@ -639,15 +669,20 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
     # both accept one, so the file says nothing about which the user wants.
     if start_from is None:
         answer = await _ask_start_point()
-        if answer in ("timeout", "unclear"):
+        if answer in ("timeout", "cancelled", "unclear"):
             workflow.logger.info("No start point chosen: %s.", answer)
             return _response(
                 "cancelled",
-                "No answer within 24 hours, so nothing was started. Ask me again when "
-                "you know which agent you want to begin at."
-                if answer == "timeout"
-                else "That answer was not one of the three agents, so nothing was "
-                "started. Ask me again and choose BRDGen, FitMap or TestCraft.",
+                {
+                    "timeout": "No answer within 24 hours, so nothing was started. Ask "
+                    "me again when you know which agent you want to begin at.",
+                    "cancelled": "You cancelled the start card, so nothing was started. "
+                    "Ask me again whenever you want to begin.",
+                }.get(
+                    answer,
+                    "That answer was not one of the three agents, so nothing was "
+                    "started. Ask me again and choose BRDGen, FitMap or TestCraft.",
+                ),
                 stage="start",
             )
         start_from = answer

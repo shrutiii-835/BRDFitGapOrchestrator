@@ -87,12 +87,13 @@ def test_the_run_cap_is_never_reached_by_the_stages():
 def test_the_run_cap_covers_the_longest_path_and_no_more():
     """The cap is the start question plus the longest chain after it, plus slack.
 
-    It grew from 7 days to 8 when the start question was added, which is the
-    derivation working: a new stage the user can wait at lengthens the cap by its own
-    timeout. Starting at TestCraft is an alternative to the BRDGen chain, never an
-    addition, so the cap takes the longer of the two rather than their sum.
+    It grew from 8 days to 10 when FitMap's timeout was raised to its own 4-day
+    limit, which is the derivation working: a longer stage lengthens the cap by
+    exactly the difference. Starting at TestCraft is an alternative to the BRDGen
+    chain, never an addition, so the cap takes the longer of the two rather than
+    their sum.
     """
-    assert agent_module._RUN_TIMEOUT == timedelta(days=8)
+    assert agent_module._RUN_TIMEOUT == timedelta(days=10)
     assert agent_module._RUN_TIMEOUT == (
         agent_module._START_TIMEOUT
         + agent_module._BRD_TIMEOUT
@@ -113,3 +114,33 @@ def test_the_two_version_numbers_agree():
         (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
     )
     assert pyproject["project"]["version"] == metadata["version"]
+
+
+@needs_real_sdk
+def test_start_card_sends_options_as_a_plain_list_so_the_chat_renders_a_selection():
+    """The SDK's default spec sends ``[{"value": ...}]``, which the chat does not draw
+    as selectable options. FitMap's cards send a plain list and render as a numbered
+    selection, so the start card must send the same shape."""
+    field = agent_module._ChoiceField(
+        name="start_from",
+        type="choice",
+        friendly_name="Start from",
+        options=agent_module.START_POINTS,
+        required=True,
+    )
+    spec = field.to_field_spec()
+    assert spec["name"] == "start_from"
+    assert spec["options"] == ["BRDGen", "FitMap", "TestCraft"]
+
+
+@needs_real_sdk
+def test_continue_card_sends_yes_no_as_a_plain_list():
+    """The BRD-to-FitMap consent card uses the same selection shape as the start card."""
+    field = agent_module._ChoiceField(
+        name="continue_to_fitmap",
+        type="choice",
+        friendly_name="Continue to fit-gap analysis",
+        options=("Yes", "No"),
+        required=True,
+    )
+    assert field.to_field_spec()["options"] == ["Yes", "No"]
