@@ -1,6 +1,6 @@
 [project]
 name = "brd-fitmap-orchestrator"
-version = "0.0.10"
+version = "0.0.12"
 description = "Conversational coordination of BRDGen, FitMap and TestCraft"
 # No readme key: the one README lives at the repository root, and hatchling cannot
 # reference a file outside this project directory. Pointing at a README.md that is not
