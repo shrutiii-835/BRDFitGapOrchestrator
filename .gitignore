@@ -25,6 +25,9 @@ dist/
 build/
 *.egg-info/
 
+# Locally downloaded SDK wheels: large, proprietary and platform-specific.
+*.whl
+
 # Local scratch and operating-system files.
 /tmp/
 .DS_Store

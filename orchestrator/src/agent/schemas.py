@@ -72,7 +72,7 @@ OUTPUT_SCHEMA = [
         "name": "continue_decision",
         "type": "string",
         "description": (
-            "Yes, No, or timeout; the user's actual answer to the continuation question."
+            "Yes, No, cancelled, or timeout; the user's actual answer to the continuation question."
         ),
     },
     {

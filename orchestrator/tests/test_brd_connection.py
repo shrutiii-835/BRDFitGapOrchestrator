@@ -264,8 +264,9 @@ async def test_word_document_and_original_zip_artifacts_are_preserved(execute, b
 class _Answer:
     """Minimal stand-in for HumanResponse."""
 
-    def __init__(self, answer):
+    def __init__(self, answer, action_type="submit"):
         self._answer = answer
+        self.action_type = action_type
 
     def value(self, name, default=None):
         assert name == "continue_to_fitmap"
@@ -397,3 +398,27 @@ async def test_the_consent_card_never_puts_our_words_in_brdgens_mouth(execute, a
     # Ours does not.
     assert "was not used" not in prompt
     assert "was not used" in result["message"]
+
+
+@pytest.mark.parametrize("action", ["cancel", "reject"])
+async def test_closing_the_consent_card_is_not_consent(execute, monkeypatch, action):
+    """A closed card stops with the BRD, even if it somehow carried a Yes."""
+    monkeypatch.setattr(
+        agent_module.humanInput,
+        "request",
+        AsyncMock(return_value=_Answer("Yes", action_type=action)),
+    )
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
+    assert result["continue_decision"] == "cancelled"
+    assert "You closed the card" in result["message"]
+    assert "fitmap_workflow_id" not in result
+    assert result["outputs"] == execute.return_value["outputs"]
+    execute.assert_awaited_once()
+
+
+async def test_consent_card_carries_its_step_label(execute, ask):
+    await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
+    assert ask.await_args.kwargs["metadata"] == {
+        "title": "Continue to fit-gap analysis?",
+        "step_label": "BRD ready",
+    }
