@@ -52,6 +52,7 @@ def execute(monkeypatch, brd_result):
 async def test_only_brd_is_called_with_known_inputs(execute, brd_result):
     payload = {
         "start_workflow": True,
+        "start_from": "BRDGen",
         "output_format": "Excel",
         "transcript": ["synthetic-input/meeting.txt"],
         "process_listing": ["synthetic-input/processes.xlsx"],
@@ -85,14 +86,16 @@ async def test_only_brd_is_called_with_known_inputs(execute, brd_result):
 
 @pytest.mark.parametrize("format_value", ["Excel", "Word", None])
 async def test_requested_format_is_forwarded_only_when_present(format_value, execute):
-    await agent_module.orchestrator.fn({"start_workflow": True, "output_format": format_value})
+    await agent_module.orchestrator.fn(
+        {"start_workflow": True, "start_from": "BRDGen", "output_format": format_value}
+    )
     child = execute.await_args.args[1]
     assert child.get("output_format") == format_value
     assert ("output_format" in child) == (format_value is not None)
 
 
 async def test_missing_files_are_left_to_brdgen(execute):
-    await agent_module.orchestrator.fn({"start_workflow": True})
+    await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert execute.await_args.args[1] == {"generate_brd": True}
 
 
@@ -125,7 +128,9 @@ async def test_no_explicit_valid_start_does_not_call_any_agent(payload, execute)
     ],
 )
 async def test_invalid_file_or_context_input_stops_before_call(fields, execute):
-    result = await agent_module.orchestrator.fn({"start_workflow": True, **fields})
+    result = await agent_module.orchestrator.fn(
+        {"start_workflow": True, "start_from": "BRDGen", **fields}
+    )
     assert result["status"] == "invalid_input"
     execute.assert_not_awaited()
 
@@ -145,7 +150,7 @@ async def test_partial_and_consolidation_warnings_reach_chat(execute, brd_result
         consolidation_warning="Consolidation unavailable.",
         skipped_chunk_count=1,
     )
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["status"] == "partial"
     assert result["skipped_chunk_count"] == 1
     assert "One chunk failed." in result["artifacts"][0]["text"]
@@ -155,7 +160,7 @@ async def test_partial_and_consolidation_warnings_reach_chat(execute, brd_result
 @pytest.mark.parametrize("status", ["cancelled", "invalid_input", "error"])
 async def test_child_stop_status_and_explanation_are_preserved(status, execute):
     execute.return_value = {"status": status, "error": "Synthetic child explanation."}
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["status"] == status
     assert "Synthetic child explanation." in result["artifacts"][0]["text"]
     execute.assert_awaited_once()
@@ -174,7 +179,9 @@ async def test_child_stop_status_and_explanation_are_preserved(status, execute):
 )
 async def test_malformed_result_is_not_reported_as_success(result, execute):
     execute.return_value = result
-    assert (await agent_module.orchestrator.fn({"start_workflow": True}))["status"] == "error"
+    assert (await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"}))[
+        "status"
+    ] == "error"
 
 
 @pytest.mark.parametrize(
@@ -213,7 +220,7 @@ def child_error():
 
 async def test_execution_failure_is_safe_and_not_retried(execute):
     execute.side_effect = child_error()
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["status"] == "error"
     assert "sensitive internal error" not in str(result)
     assert result["brd_workflow_id"] == str(CHILD_UUID)
@@ -223,7 +230,7 @@ async def test_execution_failure_is_safe_and_not_retried(execute):
 async def test_parent_cancellation_propagates(execute):
     execute.side_effect = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
-        await agent_module.orchestrator.fn({"start_workflow": True})
+        await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
 
 
 async def test_child_cancellation_is_not_converted_to_generic_failure(execute):
@@ -231,7 +238,7 @@ async def test_child_cancellation_is_not_converted_to_generic_failure(execute):
     error.__cause__ = CancelledError("cancelled")
     execute.side_effect = error
     with pytest.raises(ChildWorkflowError):
-        await agent_module.orchestrator.fn({"start_workflow": True})
+        await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
 
 
 async def test_word_document_and_original_zip_artifacts_are_preserved(execute, brd_result):
@@ -246,7 +253,9 @@ async def test_word_document_and_original_zip_artifacts_are_preserved(execute, b
     )
     brd_result["artifacts"] = deepcopy(brd_result["outputs"])
     before = deepcopy(brd_result)
-    result = await agent_module.orchestrator.fn({"start_workflow": True, "output_format": "Word"})
+    result = await agent_module.orchestrator.fn(
+        {"start_workflow": True, "start_from": "BRDGen", "output_format": "Word"}
+    )
     assert result["artifacts"][1:] == before["artifacts"]
     assert result["outputs"] == before["outputs"]
     assert brd_result == before
@@ -273,7 +282,7 @@ def ask(monkeypatch):
 
 async def test_consent_card_is_asked_once_with_the_document(execute, ask):
     """The card's shape; the Yes path is covered in test_fitmap_handoff.py."""
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     ask.assert_awaited_once()
     prompt = ask.await_args.args[0]
     assert "BRD" in prompt
@@ -293,7 +302,7 @@ async def test_consent_card_is_asked_once_with_the_document(execute, ask):
 )
 async def test_declining_keeps_the_brd(execute, monkeypatch, answer, decision, phrase):
     monkeypatch.setattr(agent_module.humanInput, "request", AsyncMock(return_value=_Answer(answer)))
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["continue_decision"] == decision
     assert phrase in result["message"]
     assert result["status"] == "success"
@@ -302,7 +311,7 @@ async def test_declining_keeps_the_brd(execute, monkeypatch, answer, decision, p
 
 async def test_timeout_is_not_consent(execute, monkeypatch):
     monkeypatch.setattr(agent_module.humanInput, "request", AsyncMock(return_value=None))
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["continue_decision"] == "timeout"
     assert "No answer within 24 hours" in result["message"]
     assert result["outputs"] == execute.return_value["outputs"]
@@ -312,7 +321,7 @@ async def test_unrecognised_answer_is_not_consent(execute, monkeypatch):
     monkeypatch.setattr(
         agent_module.humanInput, "request", AsyncMock(return_value=_Answer("maybe later"))
     )
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["continue_decision"] == "No"
 
 
@@ -326,7 +335,7 @@ async def test_failed_brd_is_never_offered_a_decision(monkeypatch, ask):
         agent_module.workflow, "info", lambda: SimpleNamespace(workflow_id="root-test")
     )
     monkeypatch.setattr(agent_module.workflow, "uuid4", lambda: CHILD_UUID)
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     ask.assert_not_awaited()
     assert "continue_decision" not in result
     assert result["status"] == "cancelled"
@@ -339,7 +348,7 @@ async def test_partial_warnings_are_shown_before_consent(monkeypatch, ask, brd_r
         agent_module.workflow, "info", lambda: SimpleNamespace(workflow_id="root-test")
     )
     monkeypatch.setattr(agent_module.workflow, "uuid4", lambda: CHILD_UUID)
-    result = await agent_module.orchestrator.fn({"start_workflow": True})
+    result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert "Two chunks were skipped." in ask.await_args.args[0]
     assert "Two chunks were skipped." in result["message"]
 
@@ -368,3 +377,23 @@ def test_an_error_string_is_not_shown_on_a_successful_run():
 def test_an_error_string_is_shown_whenever_the_run_did_not_succeed(status):
     """Partial included: it lost something, and `error` may be the only explanation."""
     assert brd_notices({"status": status, "error": "BRDGen stopped"}) == ["BRDGen stopped"]
+
+
+async def test_the_consent_card_never_puts_our_words_in_brdgens_mouth(execute, ask, brd_result):
+    """The card prints what the child said under "BRDGen reported:". A notice this
+    orchestrator wrote must not join that list, or BRDGen is quoted saying something
+    it never said. The user still hears it, in the run's own message."""
+    brd_result["warning"] = "Extraction was partial."
+    result = await agent_module.orchestrator.fn(
+        {
+            "start_workflow": True,
+            "start_from": "BRDGen",
+            "brd_file": "synthetic-input/existing.xlsx",
+        }
+    )
+    prompt = ask.await_args.args[0]
+    # BRDGen's own warning belongs on the card.
+    assert "Extraction was partial." in prompt
+    # Ours does not.
+    assert "was not used" not in prompt
+    assert "was not used" in result["message"]

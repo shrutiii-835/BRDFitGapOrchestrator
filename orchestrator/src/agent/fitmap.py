@@ -9,20 +9,29 @@ _DOCUMENTS = ("analysis_report", "client_report", "test_scripts_report")
 BRD_EXTENSIONS = (".xlsx", ".docx", ".pdf")
 
 
-def build_fitmap_payload(brd_file_key: str, payload: dict[str, Any]) -> dict[str, Any]:
+def build_fitmap_payload(brd_file_key: str | None, payload: dict[str, Any]) -> dict[str, Any]:
     """Hand FitMap the BRD and let it collect its own Oracle choices.
 
     conversation_mode keeps FitMap's existing selection cards and its TestCraft
     offer. offer_testcraft is never sent: it is a direct-run override, and the
     offer belongs to FitMap and the user.
+
+    None means no document was supplied, and the key is left out so FitMap opens its
+    own upload card: its intake asks for the BRD first and skips that step only when
+    one is already valid (AetherionAgents/fit_gap_agent, src/agent/workflow.py on
+    branch feature/fitmap-testcraft, :174 and :202). A key that was supplied but is
+    unusable is still refused rather than passed on.
     """
-    if not is_storage_key(brd_file_key) or not brd_file_key.lower().endswith(BRD_EXTENSIONS):
+    if brd_file_key is not None and (
+        not is_storage_key(brd_file_key) or not brd_file_key.lower().endswith(BRD_EXTENSIONS)
+    ):
         raise ValueError("The BRD reference is not a usable .xlsx, .docx or .pdf storage key.")
     child: dict[str, Any] = {
         "conversation_mode": True,
         "start_analysis": True,
-        "brd_file": brd_file_key,
     }
+    if brd_file_key is not None:
+        child["brd_file"] = brd_file_key
     metadata = payload.get("task_metadata")
     if isinstance(metadata, dict):
         child["task_metadata"] = dict(metadata)

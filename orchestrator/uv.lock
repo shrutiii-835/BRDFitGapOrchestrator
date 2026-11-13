@@ -379,7 +379,7 @@ wheels = [
 
 [[package]]
 name = "brd-fitmap-orchestrator"
-version = "0.0.3"
+version = "0.0.9"
 source = { editable = "." }
 dependencies = [
     { name = "aetherion-sdk" },

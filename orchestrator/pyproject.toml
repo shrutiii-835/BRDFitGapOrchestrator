@@ -1,8 +1,10 @@
 [project]
 name = "brd-fitmap-orchestrator"
-version = "0.0.6"
-description = "Conversational coordination of BRDGen and FitMap"
-readme = "README.md"
+version = "0.0.9"
+description = "Conversational coordination of BRDGen, FitMap and TestCraft"
+# No readme key: the one README lives at the repository root, and hatchling cannot
+# reference a file outside this project directory. Pointing at a README.md that is not
+# here fails the build, which is what happened between 934215e and this line.
 # Tied to the one wheel below. It is tagged cp312-cp312-macosx_26_0_arm64 and ships
 # compiled .so files built against CPython 3.12, so it cannot load on 3.13, and the SDK
 # host publishes no 3.13 build to widen towards: every Python wheel it offers is cp312

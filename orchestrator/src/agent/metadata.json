@@ -1,7 +1,7 @@
 {
   "name": "BRDFitGapOrchestrator",
-  "version": "0.0.6",
-  "description": "Runs BRDGen with its existing input and review flow, asks whether to continue, and then runs FitMap, preserving its Oracle selections and TestCraft offer.",
+  "version": "0.0.9",
+  "description": "Starts at BRDGen, FitMap or TestCraft, whichever the user chooses, and runs forward from there. Each agent keeps its own inputs, reviews and offers, and the next agent runs only on an explicit yes.",
   "component": "agent",
   "config": {
     "chat_enabled": true,
@@ -15,6 +15,13 @@
         "description": "Start only on an explicit user request."
       },
       {
+        "name": "start_from",
+        "type": "dropdown",
+        "required": false,
+        "friendly_name": "Start from",
+        "description": "BRDGen, FitMap, TestCraft"
+      },
+      {
         "name": "output_format",
         "type": "dropdown",
         "required": false,
@@ -24,10 +31,10 @@
       {
         "name": "brd_file",
         "type": "file",
-        "accepts": ".xlsx, .docx, .pdf",
+        "accepts": ".xlsx, .docx, .pdf, .txt, .md",
         "required": false,
-        "friendly_name": "Existing BRD (optional)",
-        "description": "Analyse a BRD you already have, skipping generation."
+        "friendly_name": "Existing document (optional)",
+        "description": "A BRD or Fit-Gap document you already have. FitMap analyses it; TestCraft generates tests from it."
       }
     ]
   }

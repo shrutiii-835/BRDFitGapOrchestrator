@@ -1,4 +1,4 @@
-"""BRDGen, an explicit continuation decision, then FitMap; neither child is modified."""
+"""A chosen starting agent, then forward one agent at a time; no child is modified."""
 
 from __future__ import annotations
 
@@ -14,11 +14,29 @@ from temporalio.exceptions import ChildWorkflowError, is_cancelled_exception
 from src.agent.brd import (
     brd_notices,
     build_brd_payload,
+    is_storage_key,
     select_brd_document,
     validate_brd_result,
 )
-from src.agent.fitmap import build_fitmap_payload, fitmap_artifacts, validate_fitmap_result
-from src.agent.schemas import AGENT_NAME, BRD_RESULT_FIELDS, INPUT_SCHEMA, OUTPUT_SCHEMA
+from src.agent.fitmap import (
+    BRD_EXTENSIONS,
+    build_fitmap_payload,
+    fitmap_artifacts,
+    validate_fitmap_result,
+)
+from src.agent.schemas import (
+    AGENT_NAME,
+    BRD_RESULT_FIELDS,
+    INPUT_SCHEMA,
+    OUTPUT_SCHEMA,
+    START_POINTS,
+)
+from src.agent.testcraft import (
+    TESTCRAFT_EXTENSIONS,
+    build_testcraft_payload,
+    testcraft_artifacts,
+    validate_testcraft_result,
+)
 
 _DESCRIPTION = (
     resources.files("src.agent.prompts").joinpath("conversation.md").read_text(encoding="utf-8")
@@ -26,22 +44,79 @@ _DESCRIPTION = (
 
 
 # Stage timeouts. Each one is caught below and ends the run with an explanation and
-# the BRD intact, so these are the limits a real run is meant to hit.
+# whatever was already produced, so these are the limits a real run is meant to hit.
+_START_TIMEOUT = timedelta(hours=24)
 _BRD_TIMEOUT = timedelta(days=3)
 _CONTINUE_TIMEOUT = timedelta(hours=24)
 # Covers FitMap's own Oracle selection cards and the TestCraft offer it may make.
 _FITMAP_TIMEOUT = timedelta(days=2)
+# TestCraft runs its own upload box, file check and three review gates
+# (AetherionAgents/explora_polaris, src/agent/agents.py, commit 9e0eea7), so it is
+# given the same room as FitMap rather than the minutes its processing takes.
+_TESTCRAFT_TIMEOUT = timedelta(days=2)
 
-# The run cap is different in kind: Temporal's run_timeout cannot be caught, so it ends
-# the workflow with no result and takes the running child with it. It exists only to
-# reap a wedged run and must never be what stops a healthy one. Deriving it from the
-# stages keeps that true without anyone having to remember: lengthen a stage and the cap
-# follows by the same amount. _SLACK covers the gaps between stages - validating a
-# result, raising the consent card, the calls themselves - which are minutes, not days,
-# and do not grow when a stage does. One day keeps the cap at the 7 days this agent
-# already ran with, so the derivation changes no behaviour today.
+# The run cap is the hard kill switch. Temporal's run_timeout cannot be caught: it ends
+# the workflow with no result and takes the running child with it. It is here to reap a
+# wedged run and must never be what stops a healthy one, so it is added up from the
+# waits above rather than picked. Add a stage and the cap grows by that stage's timeout,
+# with nobody having to remember to widen it.
+#
+# Every run waits for the start question, so that one is always counted. After it comes
+# one of two routes, never both, so the cap takes the longer rather than the sum:
+#
+#   BRDGen route:    1 (start) + 3 (BRDGen) + 1 (continue?) + 2 (FitMap) = 7 days
+#   TestCraft route: 1 (start) + 2 (TestCraft)                           = 3 days
+#
+# _SLACK covers the gaps between stages - validating a result, raising a card, the calls
+# themselves. Those are minutes, not days, and do not grow when a stage does.
+#
+# 7 + 1 slack = 8 days. It was 7 before the start question: that question added a place
+# a user can sit for a day, so the cap grew by a day. That is the sum working, not a
+# separate decision.
 _SLACK = timedelta(days=1)
-_RUN_TIMEOUT = _BRD_TIMEOUT + _CONTINUE_TIMEOUT + _FITMAP_TIMEOUT + _SLACK
+_BRD_CHAIN = _BRD_TIMEOUT + _CONTINUE_TIMEOUT + _FITMAP_TIMEOUT
+_RUN_TIMEOUT = _START_TIMEOUT + max(_BRD_CHAIN, _TESTCRAFT_TIMEOUT) + _SLACK
+
+
+def _named_start_point(value: Any) -> str | None:
+    """Match a supplied start_from to one of the three agents, or None if it is not one."""
+    if not isinstance(value, str):
+        return None
+    wanted = value.strip().lower()
+    return next((name for name in START_POINTS if name.lower() == wanted), None)
+
+
+async def _ask_start_point() -> str:
+    """Ask where to begin. No default: silence starts nothing, as everywhere else here.
+
+    Returns the chosen agent, or why there is none: "timeout" when the card went
+    unanswered, "unclear" when the answer was not one of the three. Neither is a start
+    point, but they are different things, and someone who answered should not be told
+    they stayed silent. Neither word can collide with a real answer.
+    """
+    response = await humanInput.request(
+        "Which agent do you want to start from?\n\n"
+        "BRDGen generates a BRD, FitMap analyses one against Oracle, and TestCraft "
+        "generates test scenarios and scripts. Whichever you pick, you will be asked "
+        "before anything after it runs.",
+        request_type="input",
+        fields=[
+            Field(
+                name="start_from",
+                type="choice",
+                friendly_name="Start from",
+                options=START_POINTS,
+                required=True,
+            )
+        ],
+        metadata={"title": "Where should this run start?"},
+        step_id="start_point",
+        timeout=_START_TIMEOUT,
+        on_timeout="return_none",
+    )
+    if response is None:
+        return "timeout"
+    return _named_start_point(response.value("start_from")) or "unclear"
 
 
 async def _ask_continue(document: dict[str, Any], notices: list[str]) -> str:
@@ -109,18 +184,29 @@ def _new_child_id() -> str:
     return str(workflow.uuid4())
 
 
-async def _run_fitmap_only(brd_file_key: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """Analyse a BRD the user already has, without regenerating it."""
-    if not isinstance(brd_file_key, str):
+async def _run_fitmap_only(
+    brd_file_key: Any, payload: dict[str, Any], carried: list[str]
+) -> dict[str, Any]:
+    """Analyse a BRD, regenerating nothing.
+
+    With no document at all FitMap opens its own upload card, the same way BRDGen and
+    TestCraft collect their own inputs. Something supplied that is not a key is still
+    refused here: that is a caller's mistake, not a user with nothing to attach.
+    """
+    # These two guards no longer fire: _run_from checks the reference for every agent
+    # that receives one, before this is called. They stay as the boundary's own check,
+    # so a future caller cannot reach FitMap with something unusable, and that is why
+    # they are the uncovered lines in this module.
+    if brd_file_key is not None and not isinstance(brd_file_key, str):
         return _response(
             "invalid_input",
-            "brd_file must be the storage key of an existing BRD document.",
+            _with_notices("brd_file must be the storage key of an existing BRD document.", carried),
             stage="fitgap",
         )
     try:
         child_payload = build_fitmap_payload(brd_file_key, payload)
     except ValueError as exc:
-        return _response("invalid_input", str(exc), stage="fitgap")
+        return _response("invalid_input", _with_notices(str(exc), carried), stage="fitgap")
 
     fitmap_id = _new_child_id()
     workflow.logger.info("Analysing a supplied BRD; FitMap run %s.", fitmap_id)
@@ -132,22 +218,91 @@ async def _run_fitmap_only(brd_file_key: Any, payload: dict[str, Any]) -> dict[s
         workflow.logger.warning("FitMap run %s did not complete.", fitmap_id)
         return _response(
             "error",
-            "FitMap could not complete. Inspect its run before retrying.",
+            _with_notices("FitMap could not complete. Inspect its run before retrying.", carried),
             stage="fitgap",
             fitmap_workflow_id=fitmap_id,
         )
     except ValueError as exc:
         workflow.logger.warning("FitMap run %s returned an unusable result.", fitmap_id)
-        return _response("error", str(exc), stage="fitgap", fitmap_workflow_id=fitmap_id)
+        return _response(
+            "error", _with_notices(str(exc), carried), stage="fitgap", fitmap_workflow_id=fitmap_id
+        )
     workflow.logger.info("FitMap run %s finished with status %s.", fitmap_id, analysis["status"])
+    message = _with_notices(
+        analysis.get("message") or "FitMap finished; its results are below.", carried
+    )
     return {
         **analysis,
         "stage": "fitgap",
         "fitmap_workflow_id": fitmap_id,
-        "message": analysis.get("message") or "FitMap finished; its results are below.",
+        "message": message,
         "artifacts": [
-            {"title": "BRD-FitGap Orchestrator", "text": "Analysed the BRD you supplied."},
+            {"title": "BRD-FitGap Orchestrator", "text": message},
             *fitmap_artifacts(analysis),
+        ],
+    }
+
+
+async def _run_testcraft_only(
+    payload: dict[str, Any], document: Any, carried: list[str]
+) -> dict[str, Any]:
+    """Generate tests from a document the user already has, with no earlier stage.
+
+    "TestCraft" is a literal at the call site, which is what lets the platform map the
+    child's task queue. That is enough on its own: a live sbox/test run at 0.0.8 reached
+    TestCraft by name and came back with its workbook, so the orchestrator needs none of
+    the agents-table lookup FitMap does for the same child
+    (AetherionAgents/fit_gap_agent, src/tools/agent_lookup.py), and takes on no database
+    dependency for it.
+    """
+    child_payload = build_testcraft_payload(document)
+    testcraft_id = _new_child_id()
+    workflow.logger.info("Starting TestCraft run %s.", testcraft_id)
+    try:
+        child_result = await agentExecutor.execute(
+            "TestCraft",
+            child_payload,
+            workflow_id=testcraft_id,
+            execution_timeout=_TESTCRAFT_TIMEOUT,
+            retry_policy=RetryPolicy(maximum_attempts=1),
+        )
+    except ChildWorkflowError as exc:
+        if is_cancelled_exception(exc):
+            raise
+        workflow.logger.warning("TestCraft run %s did not complete.", testcraft_id)
+        return _response(
+            "error",
+            _with_notices(
+                "TestCraft could not complete. Inspect its run before retrying.", carried
+            ),
+            stage="testcraft",
+            testcraft_workflow_id=testcraft_id,
+        )
+    try:
+        result = validate_testcraft_result(child_result)
+    except ValueError as exc:
+        workflow.logger.warning("TestCraft run %s returned an unusable result.", testcraft_id)
+        return _response(
+            "error",
+            _with_notices(str(exc), carried),
+            stage="testcraft",
+            testcraft_workflow_id=testcraft_id,
+        )
+
+    workflow.logger.info(
+        "TestCraft run %s finished with status %s.", testcraft_id, result["status"]
+    )
+    message = _with_notices(
+        result.get("message") or result.get("reason") or "TestCraft finished.", carried
+    )
+    return {
+        **result,
+        "stage": "testcraft",
+        "testcraft_workflow_id": testcraft_id,
+        "message": message,
+        "artifacts": [
+            {"title": "BRD-FitGap Orchestrator", "text": message},
+            *testcraft_artifacts(result),
         ],
     }
 
@@ -265,6 +420,7 @@ def _response(
     stage: str = "brd",
     brd_workflow_id: str | None = None,
     fitmap_workflow_id: str | None = None,
+    testcraft_workflow_id: str | None = None,
 ) -> dict[str, Any]:
     """A result with no child artifacts to carry, naming whichever run it concerns."""
     result: dict[str, Any] = {
@@ -277,59 +433,94 @@ def _response(
         result["brd_workflow_id"] = brd_workflow_id
     if fitmap_workflow_id:
         result["fitmap_workflow_id"] = fitmap_workflow_id
+    if testcraft_workflow_id:
+        result["testcraft_workflow_id"] = testcraft_workflow_id
     return result
 
 
-@register(
-    name=AGENT_NAME,
-    description=_DESCRIPTION,
-    input_schema=INPUT_SCHEMA,
-    output_schema=OUTPUT_SCHEMA,
-    type="agent",
-    chat_enabled=True,
-    hitl_enabled=True,
-)
-@agent(name=AGENT_NAME, run_timeout=_RUN_TIMEOUT)
-async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
-    """Run BRDGen, ask whether to continue, and run FitMap only on an explicit Yes."""
-    if not isinstance(payload, dict):
-        return _response("invalid_input", "The workflow input must be an object.")
-    start = payload.get("start_workflow", False)
-    if not isinstance(start, bool):
-        return _response("invalid_input", "start_workflow must be true or false.")
-    output_format = payload.get("output_format")
-    if output_format is not None and output_format not in ("Excel", "Word"):
-        return _response("invalid_input", "Choose Excel or Word as the output format.")
-    # Read before the ready branch below. A BRD can arrive on a turn the platform did
-    # not mark as a start - "is this format right for a fit-gap?" is a question, not a
-    # request - and checking the flag first would drop that file without saying so.
-    existing_brd = payload.get("brd_file")
-    if not start:
-        if existing_brd is not None:
-            # Named, not started: the rest of this agent asks before running FitMap,
-            # and an attached file is not clearer consent than an answered question.
-            return _response(
-                "ready",
-                "I have your BRD and have not started anything yet. Say so and I will "
-                "send it straight to FitMap for the Oracle fit-gap analysis, skipping "
-                "BRD generation.",
-                stage="fitgap",
-            )
-        return _response(
-            "ready",
-            "I run BRDGen with its existing uploads and review, then ask whether to "
-            "continue to the Oracle fit-gap analysis with FitMap.",
+def _attached(value: Any) -> bool:
+    """A document the user actually attached.
+
+    A blank string or an empty object is what the platform sends for a file field that
+    was offered and left empty. Treating those as an attachment makes the agent claim
+    to hold a file that does not exist.
+    """
+    if value is None:
+        return False
+    return bool(value.strip()) if isinstance(value, str) else bool(value)
+
+
+def _unusable_notice(start_from: str, document: Any) -> str | None:
+    """Why the attached document is not going to the chosen agent, or None if it is.
+
+    This is about the file type only. A document the agent cannot read is never fatal
+    and never forwarded: the agent opens its own upload card, and the user is told why
+    rather than left wondering where their file went. A reference that is malformed or
+    unsafe is a different thing - a caller's mistake, not a user's choice - and is
+    refused by the caller of this function before it is reached.
+
+    The accepted types are each child's own, read from its metadata and kept beside its
+    payload builder, which re-checks them as the boundary guard.
+    """
+    if not _attached(document):
+        return None
+    if start_from == "BRDGen":
+        # BRDGen writes a new BRD from transcripts and process listings. It has no
+        # input for a finished document, so any file attached here goes unused.
+        return (
+            "The document you attached was not used. BRDGen writes a new BRD, so it has "
+            "nowhere to put one. Start at FitMap to analyse it, or at TestCraft to "
+            "generate tests from it."
         )
+    accepted = BRD_EXTENSIONS if start_from == "FitMap" else TESTCRAFT_EXTENSIONS
+    if not isinstance(document, str) or document.lower().endswith(accepted):
+        return None
+    return (
+        f"The document you attached was not used: {start_from} does not read that file "
+        f"type. It accepts {', '.join(accepted)}, and will ask you for one it can read."
+    )
 
-    # Recovery: an existing BRD skips generation. Supplying one and asking to start is
-    # itself the request for analysis, so it needs no separate continuation question.
-    if existing_brd is not None:
-        return await _run_fitmap_only(existing_brd, payload)
 
+_RECEIVES_A_DOCUMENT = {"FitMap": "fitgap", "TestCraft": "testcraft"}
+
+
+async def _run_from(start_from: str, payload: dict[str, Any], existing_brd: Any) -> dict[str, Any]:
+    """Run the chosen agent. Each one offers the next itself; none is assumed."""
+    # Checked once, here, for every agent the document can reach. A reference that is
+    # malformed or unsafe is a caller's mistake and stops the run; doing this per agent
+    # let one of them refuse it and the other drop it without a word.
+    # BRDGen is exempt: it never receives the document, so its shape cannot matter.
+    stage = _RECEIVES_A_DOCUMENT.get(start_from)
+    if stage and _attached(existing_brd) and not is_storage_key(existing_brd):
+        return _response(
+            "invalid_input",
+            "brd_file must be the storage key of an uploaded document.",
+            stage=stage,
+        )
+    notice = _unusable_notice(start_from, existing_brd)
+    carried = [notice] if notice else []
+    # Withheld rather than forwarded, so no child is handed a file it cannot open.
+    document = None if notice or not _attached(existing_brd) else existing_brd
+    if start_from == "TestCraft":
+        # No file is required: TestCraft opens its own upload box when it is handed
+        # none, the same way BRDGen collects its own inputs.
+        return await _run_testcraft_only(payload, document, carried)
+    if start_from == "FitMap":
+        # No document is required: FitMap asks for one itself when it is handed none.
+        return await _run_fitmap_only(document, payload, carried)
+    return await _run_brdgen(payload, carried)
+
+
+async def _run_brdgen(payload: dict[str, Any], carried: list[str]) -> dict[str, Any]:
+    """Generate the BRD, then ask whether to continue to FitMap.
+
+    `carried` holds notices decided before BRDGen ran. They join BRDGen's own so a
+    thing the orchestrator did not do is said once, in the same place as the rest.
+    """
     try:
         child_payload = build_brd_payload(payload)
     except ValueError as exc:
-        return _response("invalid_input", str(exc))
+        return _response("invalid_input", _with_notices(str(exc), carried))
 
     child_id = _new_child_id()
     workflow.logger.info("Starting BRDGen run %s.", child_id)
@@ -347,18 +538,26 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
         workflow.logger.warning("BRDGen run %s did not complete; FitMap not started.", child_id)
         return _response(
             "error",
-            "BRDGen could not complete. Inspect its run before retrying. FitMap was not started.",
+            _with_notices(
+                "BRDGen could not complete. Inspect its run before retrying. "
+                "FitMap was not started.",
+                carried,
+            ),
             brd_workflow_id=child_id,
         )
     try:
         result = validate_brd_result(child_result)
     except ValueError as exc:
         workflow.logger.warning("BRDGen run %s returned an unusable result.", child_id)
-        return _response("error", str(exc), brd_workflow_id=child_id)
+        return _response("error", _with_notices(str(exc), carried), brd_workflow_id=child_id)
 
     workflow.logger.info("BRDGen run %s finished with status %s.", child_id, result["status"])
 
-    notices = brd_notices(result)
+    # Kept apart on purpose. The consent card prints what BRDGen said under "BRDGen
+    # reported:", so a notice this orchestrator wrote must not join that list - it
+    # would put our words in the child's mouth. Both still reach the final message.
+    reported = brd_notices(result)
+    notices = carried + reported
     if result["status"] not in ("success", "partial"):
         message = "BRDGen stopped without a completed BRD. FitMap was not started."
         if notices:
@@ -368,9 +567,9 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         document = select_brd_document(result)
     except ValueError as exc:
-        return _response("error", str(exc), brd_workflow_id=child_id)
+        return _response("error", _with_notices(str(exc), notices), brd_workflow_id=child_id)
 
-    decision = await _ask_continue(document, notices)
+    decision = await _ask_continue(document, reported)
     workflow.logger.info("Continuation decision: %s.", decision)
     if decision != "Yes":
         message = (
@@ -383,3 +582,77 @@ async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
         return _finish(result, child_id, message, decision=decision)
 
     return await _continue_to_fitmap(result, child_id, document, notices, payload)
+
+
+@register(
+    name=AGENT_NAME,
+    description=_DESCRIPTION,
+    input_schema=INPUT_SCHEMA,
+    output_schema=OUTPUT_SCHEMA,
+    type="agent",
+    chat_enabled=True,
+    hitl_enabled=True,
+)
+@agent(name=AGENT_NAME, run_timeout=_RUN_TIMEOUT)
+async def orchestrator(payload: dict[str, Any]) -> dict[str, Any]:
+    """Ask where to start, run that agent, and let each one offer the next itself."""
+    if not isinstance(payload, dict):
+        return _response("invalid_input", "The workflow input must be an object.")
+    start = payload.get("start_workflow", False)
+    if not isinstance(start, bool):
+        return _response("invalid_input", "start_workflow must be true or false.")
+    output_format = payload.get("output_format")
+    if output_format is not None and output_format not in ("Excel", "Word"):
+        return _response("invalid_input", "Choose Excel or Word as the output format.")
+    # `_attached`'s rule again: the platform sends a blank for a field that was offered
+    # and left alone, and a blank is not a choice. Refusing one would stop the run
+    # instead of showing the card that asks for the choice.
+    requested = payload.get("start_from") or None
+    if isinstance(requested, str) and not requested.strip():
+        requested = None
+    start_from = _named_start_point(requested)
+    if requested is not None and start_from is None:
+        return _response(
+            "invalid_input",
+            "Choose BRDGen, FitMap or TestCraft as the agent to start from.",
+            stage="start",
+        )
+    # Read before the ready branch below. A document can arrive on a turn the platform
+    # did not mark as a start - "is this format right for a fit-gap?" is a question, not
+    # a request - and checking the flag first would drop that file without saying so.
+    existing_brd = payload.get("brd_file")
+    if not start:
+        held = (
+            " I have the document you attached; FitMap or TestCraft can use it."
+            if _attached(existing_brd)
+            else ""
+        )
+        return _response(
+            "ready",
+            "I can start at BRDGen, which generates a BRD, at FitMap, which analyses one "
+            "against Oracle, or at TestCraft, which generates test scenarios and scripts. "
+            "Ask me to start and I will check which one you want." + held,
+            stage="start",
+        )
+
+    # Asked, never inferred. An attached document is not an answer: FitMap and TestCraft
+    # both accept one, so the file says nothing about which the user wants.
+    if start_from is None:
+        answer = await _ask_start_point()
+        if answer in ("timeout", "unclear"):
+            workflow.logger.info("No start point chosen: %s.", answer)
+            return _response(
+                "cancelled",
+                "No answer within 24 hours, so nothing was started. Ask me again when "
+                "you know which agent you want to begin at."
+                if answer == "timeout"
+                else "That answer was not one of the three agents, so nothing was "
+                "started. Ask me again and choose BRDGen, FitMap or TestCraft.",
+                stage="start",
+            )
+        start_from = answer
+
+    workflow.logger.info("Starting the run at %s.", start_from)
+    result = await _run_from(start_from, payload, existing_brd)
+    result["start_from"] = start_from
+    return result
