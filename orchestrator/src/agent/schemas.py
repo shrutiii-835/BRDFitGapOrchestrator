@@ -2,12 +2,25 @@
 
 AGENT_NAME = "BRDFitGapOrchestrator"
 
+# The agents this orchestrator can begin a run at, in the order they chain. Each one
+# runs forward from where it starts; the agent after it is offered, never assumed.
+START_POINTS = ("BRDGen", "FitMap", "TestCraft")
+
 INPUT_SCHEMA = [
     {
         "name": "start_workflow",
         "type": "boolean",
         "required": False,
-        "description": "True only when the user explicitly asks to start BRD generation.",
+        "description": "True only when the user explicitly asks to start a run.",
+    },
+    {
+        "name": "start_from",
+        "type": "string",
+        "required": False,
+        "description": (
+            "BRDGen, FitMap or TestCraft; the agent to begin at. Set it only when the "
+            "user names one. The run asks for the choice when it is absent."
+        ),
     },
     {
         "name": "output_format",
@@ -20,8 +33,9 @@ INPUT_SCHEMA = [
         "type": "file",
         "required": False,
         "description": (
-            "An existing BRD to analyse directly, skipping generation. Only when the user "
-            "supplies one and asks for fit-gap analysis."
+            "An existing BRD or Fit-Gap document, used by whichever agent the run starts "
+            "at: FitMap analyses it, TestCraft generates tests from it. Only when the "
+            "user supplies one."
         ),
     },
 ]
@@ -31,7 +45,8 @@ OUTPUT_SCHEMA = [
         "name": "status",
         "type": "string",
         "description": (
-            "ready, success, partial, cancelled, invalid_input, or error; applies to the BRD stage."
+            "ready, success, partial, cancelled, invalid_input, or error; the outcome of "
+            "the last agent the run reached."
         ),
     },
     {
@@ -43,7 +58,15 @@ OUTPUT_SCHEMA = [
     {
         "name": "stage",
         "type": "string",
-        "description": "brd or fitgap, whichever stage the run reached.",
+        "description": (
+            "start, brd, fitgap or testcraft, whichever stage the run reached; start "
+            "means it stopped before any agent ran."
+        ),
+    },
+    {
+        "name": "start_from",
+        "type": "string",
+        "description": "BRDGen, FitMap or TestCraft; the agent this run actually began at.",
     },
     {
         "name": "continue_decision",
@@ -84,6 +107,16 @@ OUTPUT_SCHEMA = [
         "name": "testcraft",
         "type": "object",
         "description": "FitMap's TestCraft outcome, returned unchanged when it was offered.",
+    },
+    {
+        "name": "test_cases_document",
+        "type": "object",
+        "description": "TestCraft's own workbook, when the run started at TestCraft.",
+    },
+    {
+        "name": "testcraft_workflow_id",
+        "type": "string",
+        "description": "TestCraft run identifier for tracing, when the run started there.",
     },
     {
         "name": "warning",
