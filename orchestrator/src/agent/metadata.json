@@ -1,6 +1,6 @@
 {
   "name": "BRDFitGapOrchestrator",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Starts at BRDGen, FitMap or TestCraft, whichever the user chooses, and runs forward from there. Each agent keeps its own inputs, reviews and offers, and the next agent runs only on an explicit yes.",
   "component": "agent",
   "config": {

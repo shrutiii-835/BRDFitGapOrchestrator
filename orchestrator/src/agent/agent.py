@@ -119,10 +119,12 @@ async def _ask_start_point() -> str:
     collide with a real answer.
     """
     response = await humanInput.request(
-        "Which agent do you want to start from?\n\n"
-        "BRDGen generates a BRD, FitMap analyses one against Oracle, and TestCraft "
-        "generates test scenarios and scripts. Whichever you pick, you will be asked "
-        "before anything after it runs.",
+        "I coordinate three agents. Which one do you want to start from?\n\n"
+        "- **BRDGen** drafts a Business Requirements Document.\n"
+        "- **FitMap** runs an Oracle fit-gap analysis on a BRD.\n"
+        "- **TestCraft** generates test scenarios and scripts from a BRD or "
+        "fit-gap document.\n\n"
+        "Each later agent runs only if you agree.",
         request_type="input",
         fields=[
             _ChoiceField(

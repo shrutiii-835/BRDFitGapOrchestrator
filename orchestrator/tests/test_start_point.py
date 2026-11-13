@@ -317,3 +317,12 @@ async def test_the_start_card_carries_its_step_label(no_children, ask):
         "title": "Where should this run start?",
         "step_label": "Choose agent",
     }
+
+
+async def test_the_start_card_explains_all_three_agents(no_children, ask):
+    """The intro lives in the card, so a bare mention needs no chat explanation first."""
+    ask.return_value = _Answer("BRDGen", action_type="cancel")
+    await agent_module.orchestrator.fn({"start_workflow": True})
+    prompt = ask.await_args.args[0]
+    for name in START_POINTS:
+        assert f"**{name}**" in prompt
