@@ -1,8 +1,10 @@
 """Exercise the foundation against the installed SDK, without starting remote runs."""
 
 import json
+import tomllib
 from datetime import timedelta
 from importlib import import_module, resources
+from pathlib import Path
 
 import aetherion_sdk
 import pytest
@@ -68,14 +70,77 @@ async def test_registered_workflow_can_be_prepared_in_temporal_sandbox():
 
 
 def test_the_run_cap_is_never_reached_by_the_stages():
-    """The cap is uncatchable: it must outlast every stage, or a healthy run is killed
-    with no result. Strictly greater, so setting _SLACK to zero fails here."""
-    stages = (
-        agent_module._BRD_TIMEOUT + agent_module._CONTINUE_TIMEOUT + agent_module._FITMAP_TIMEOUT
+    """The cap is uncatchable: it must outlast every path a run can take, or a healthy
+    run is killed with no result. Strictly greater, so setting _SLACK to zero fails
+    here. Both paths begin with the start question, so both include it."""
+    brd_chain = (
+        agent_module._START_TIMEOUT
+        + agent_module._BRD_TIMEOUT
+        + agent_module._CONTINUE_TIMEOUT
+        + agent_module._FITMAP_TIMEOUT
     )
-    assert agent_module._RUN_TIMEOUT > stages
+    testcraft_path = agent_module._START_TIMEOUT + agent_module._TESTCRAFT_TIMEOUT
+    assert agent_module._RUN_TIMEOUT > brd_chain
+    assert agent_module._RUN_TIMEOUT > testcraft_path
 
 
-def test_the_run_cap_is_unchanged_by_deriving_it():
-    """Deriving the cap must not alter the 7 days this agent already ran with."""
-    assert agent_module._RUN_TIMEOUT == timedelta(days=7)
+def test_the_run_cap_covers_the_longest_path_and_no_more():
+    """The cap is the start question plus the longest chain after it, plus slack.
+
+    It grew from 8 days to 10 when FitMap's timeout was raised to its own 4-day
+    limit, which is the derivation working: a longer stage lengthens the cap by
+    exactly the difference. Starting at TestCraft is an alternative to the BRDGen
+    chain, never an addition, so the cap takes the longer of the two rather than
+    their sum.
+    """
+    assert agent_module._RUN_TIMEOUT == timedelta(days=10)
+    assert agent_module._RUN_TIMEOUT == (
+        agent_module._START_TIMEOUT
+        + agent_module._BRD_TIMEOUT
+        + agent_module._CONTINUE_TIMEOUT
+        + agent_module._FITMAP_TIMEOUT
+        + agent_module._SLACK
+    )
+    # The TestCraft path is shorter, so it must not add to the cap.
+    assert agent_module._TESTCRAFT_TIMEOUT < agent_module._BRD_CHAIN
+
+
+def test_the_two_version_numbers_agree():
+    """The platform reads [project].version in pyproject.toml, not metadata.json, and
+    refuses a publish whose version is already live. Bumping one and not the other
+    means a publish is rejected, or worse, succeeds under the wrong number."""
+    metadata = json.loads(resources.files("src.agent").joinpath("metadata.json").read_text())
+    pyproject = tomllib.loads(
+        (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+    )
+    assert pyproject["project"]["version"] == metadata["version"]
+
+
+@needs_real_sdk
+def test_start_card_sends_options_as_a_plain_list_so_the_chat_renders_a_selection():
+    """The SDK's default spec sends ``[{"value": ...}]``, which the chat does not draw
+    as selectable options. FitMap's cards send a plain list and render as a numbered
+    selection, so the start card must send the same shape."""
+    field = agent_module._ChoiceField(
+        name="start_from",
+        type="choice",
+        friendly_name="Start from",
+        options=agent_module.START_POINTS,
+        required=True,
+    )
+    spec = field.to_field_spec()
+    assert spec["name"] == "start_from"
+    assert spec["options"] == ["BRDGen", "FitMap", "TestCraft"]
+
+
+@needs_real_sdk
+def test_continue_card_sends_yes_no_as_a_plain_list():
+    """The BRD-to-FitMap consent card uses the same selection shape as the start card."""
+    field = agent_module._ChoiceField(
+        name="continue_to_fitmap",
+        type="choice",
+        friendly_name="Continue to fit-gap analysis",
+        options=("Yes", "No"),
+        required=True,
+    )
+    assert field.to_field_spec()["options"] == ["Yes", "No"]
