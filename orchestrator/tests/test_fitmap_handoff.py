@@ -66,7 +66,11 @@ def children(monkeypatch, brd_result, fitmap_result):
     monkeypatch.setattr(
         agent_module.humanInput,
         "request",
-        AsyncMock(return_value=SimpleNamespace(value=lambda name, default=None: "Yes")),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                action_type="submit", value=lambda name, default=None: "Yes"
+            )
+        ),
     )
     return call
 
@@ -89,7 +93,7 @@ async def test_fitmap_receives_the_brd_and_owns_its_own_choices(children, fitmap
     for owned in ("oracle_product", "oracle_application", "offer_testcraft"):
         assert owned not in child_payload
     assert children.await_args_list[1].kwargs["workflow_id"] == str(FITMAP_UUID)
-    assert children.await_args_list[1].kwargs["execution_timeout"].days == 2
+    assert children.await_args_list[1].kwargs["execution_timeout"].days == 4
     assert result["stage"] == "fitgap"
     assert result["status"] == "success"
     assert result["summary"] == fitmap_result["summary"]
@@ -109,7 +113,11 @@ async def test_declining_never_starts_fitmap(children, monkeypatch):
     monkeypatch.setattr(
         agent_module.humanInput,
         "request",
-        AsyncMock(return_value=SimpleNamespace(value=lambda name, default=None: "No")),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                action_type="submit", value=lambda name, default=None: "No"
+            )
+        ),
     )
     result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert children.await_count == 1
@@ -143,7 +151,11 @@ async def test_failed_fitmap_keeps_the_brd(monkeypatch, brd_result):
     monkeypatch.setattr(
         agent_module.humanInput,
         "request",
-        AsyncMock(return_value=SimpleNamespace(value=lambda name, default=None: "Yes")),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                action_type="submit", value=lambda name, default=None: "Yes"
+            )
+        ),
     )
     result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["status"] == "success"
@@ -165,7 +177,11 @@ async def test_unsuccessful_fitmap_status_is_not_dressed_up(monkeypatch, brd_res
     monkeypatch.setattr(
         agent_module.humanInput,
         "request",
-        AsyncMock(return_value=SimpleNamespace(value=lambda name, default=None: "Yes")),
+        AsyncMock(
+            return_value=SimpleNamespace(
+                action_type="submit", value=lambda name, default=None: "Yes"
+            )
+        ),
     )
     result = await agent_module.orchestrator.fn({"start_workflow": True, "start_from": "BRDGen"})
     assert result["status"] == "cancelled"

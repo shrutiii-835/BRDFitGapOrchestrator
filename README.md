@@ -27,7 +27,7 @@ From `orchestrator/`:
 .venv/bin/pytest -q
 ```
 
-196 tests exercise the registered function, all three boundary-check modules, the start-point card, the BRDGen consent card and the FitMap and TestCraft handoffs with mocked child execution, without starting platform runs. Coverage is 98%, with a 95% floor enforced by `--cov-fail-under`. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs.
+206 tests exercise the registered function, all three boundary-check modules, the start-point card, the BRDGen consent card and the FitMap and TestCraft handoffs with mocked child execution, without starting platform runs. Coverage is 98%, with a 95% floor enforced by `--cov-fail-under`. They do not prove conversation routing, authentication, or deployed end-to-end behavior; that is covered by the live sandbox runs.
 
 CI (`.github/workflows/unit_test.yml`) runs the same lint and tests on a public `ubuntu-latest` runner. The SDK is private and ships no Linux wheel, so `tests/conftest.py` stubs it there and the two tests that assert on the real SDK's registration skip themselves and say so.
 
